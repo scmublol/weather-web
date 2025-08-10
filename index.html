@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Weather in Your Terminal — Web</title>
+  <style>
+    :root{
+      --bg:#0f1724; --card:#0b1220; --accent:#4fd1c5; --muted:#94a3b8;
+      --glass: rgba(255,255,255,0.04);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+    }
+    html,body{height:100%;margin:0;background:linear-gradient(180deg,#081028 0%, #031126 100%);color:#e6eef6}
+    .wrap{min-height:100%;display:flex;align-items:center;justify-content:center;padding:28px}
+    .card{width:100%;max-width:760px;background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));border-radius:12px;box-shadow:0 8px 30px rgba(2,6,23,0.6);padding:22px;backdrop-filter: blur(6px)}
+    header{display:flex;align-items:center;gap:14px}
+    h1{margin:0;font-size:1.15rem}
+    p.lead{margin:0;color:var(--muted);font-size:.92rem}
+    .grid{display:grid;grid-template-columns:1fr 220px;gap:18px;margin-top:16px}
+    .main{padding:16px;background:var(--card);border-radius:10px}
+    .side{padding:14px;background:var(--glass);border-radius:10px;display:flex;flex-direction:column;gap:10px;align-items:center;justify-content:center}
+    .big-temp{font-size:3.4rem;margin:0;line-height:1}
+    .meta{color:var(--muted);margin-top:6px}
+    .icon{font-size:3.2rem}
+    .btn{background:transparent;border:1px solid rgba(255,255,255,0.06);color:var(--accent);padding:8px 12px;border-radius:8px;cursor:pointer}
+    .small{font-size:.87rem;color:var(--muted)}
+    .error{color:#ff7b7b;background:rgba(255,123,123,0.06);padding:8px;border-radius:8px}
+    @media(max-width:680px){.grid{grid-template-columns:1fr;}.side{flex-direction:row;gap:12px;padding:12px}}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card" role="main">
+      <header>
+        <div style="width:48px;height:48px;border-radius:10px;background:linear-gradient(135deg,var(--accent),#60a5fa);display:flex;align-items:center;justify-content:center;font-weight:700">W</div>
+        <div>
+          <h1>Local Weather</h1>
+          <p class="lead">Automatically detects your location and shows the current weather.</p>
+        </div>
+        <div style="margin-left:auto">
+          <button id="refreshBtn" class="btn" title="Refresh weather">Refresh</button>
+        </div>
+      </header>
+
+      <div id="status" style="margin-top:12px" class="small">Initializing…</div>
+
+      <div class="grid">
+        <div class="main" id="mainCard">
+          <div id="content">
+            <div style="display:flex;align-items:center;gap:18px">
+              <div class="icon" id="weatherIcon">⛅</div>
+              <div>
+                <p id="place" style="margin:0;font-weight:600">—</p>
+                <p id="desc" class="small" style="margin:6px 0 0 0;color:var(--muted)">—</p>
+              </div>
+            </div>
+
+            <div style="margin-top:18px">
+              <p class="big-temp" id="temp">--°C</p>
+              <p class="meta" id="more">Feels like — · Humidity — · Wind —</p>
+            </div>
+          </div>
+        </div>
+
+        <aside class="side">
+          <div style="text-align:center">
+            <div class="small">Last updated</div>
+            <div id="updated" style="font-weight:600;margin-top:6px">—</div>
+          </div>
+
+          <div style="height:1px;width:100%;background:rgba(255,255,255,0.02)"></div>
+
+          <div style="text-align:center">
+            <div class="small">Location method</div>
+            <div id="method" style="font-weight:600;margin-top:6px">—</div>
+          </div>
+        </aside>
+      </div>
+
+      <div id="errorBox" style="margin-top:14px;display:none"></div>
+
+      <footer style="margin-top:16px;color:var(--muted);font-size:.88rem">
+        Tip: Allow location access for the most accurate results. This site uses <strong>Open-Meteo</strong> for weather (no API key needed).
+      </footer>
+    </div>
+  </div>
+
+  <script>
+    // Icons by weather code (basic mapping)
+    const iconMap = {
+      0: '☀️', // Clear sky
+      1: '🌤️', // Mainly clear
+      2: '⛅', // Partly cloudy
+      3: '☁️', // Overcast
+      45: '🌫️',46:'🌫️', // Fog
+      48: '🌫️',
+      51: '🌦️',52:'🌧️',53:'🌧️', // Drizzle / Rain
+      61: '🌧️',63:'🌧️',65:'⛈️',
+      71: '🌨️',73:'🌨️',75:'🌨️',
+      80: '🌦️',81:'🌧️',82:'⛈️',
+      95: '⛈️',96:'⛈️',99:'⛈️'
+    };
+
+    const statusEl = document.getElementById('status');
+    const methodEl = document.getElementById('method');
+    const placeEl = document.getElementById('place');
+    const descEl = document.getElementById('desc');
+    const tempEl = document.getElementById('temp');
+    const moreEl = document.getElementById('more');
+    const iconEl = document.getElementById('weatherIcon');
+    const updatedEl = document.getElementById('updated');
+    const errorBox = document.getElementById('errorBox');
+    const refreshBtn = document.getElementById('refreshBtn');
+
+    // Helper: format date/time
+    function fmtDate(ts) {
+      const d = new Date(ts);
+      return d.toLocaleString();
+    }
+
+    // Convert Open-Meteo weather code to text (small mapping)
+    function weatherText(code) {
+      // Simplified mapping
+      if (code === 0) return 'Clear sky';
+      if (code === 1) return 'Mainly clear';
+      if (code === 2) return 'Partly cloudy';
+      if (code === 3) return 'Overcast';
+      if ([45,48].includes(code)) return 'Fog';
+      if ([51,53,55,80,81].includes(code)) return 'Rain / Drizzle';
+      if ([61,63,65,95,96,99].includes(code)) return 'Thunderstorm / Heavy rain';
+      if ([71,73,75,77].includes(code)) return 'Snow';
+      return 'Unknown';
+    }
+
+    // Primary: browser geolocation
+    async function getLocationViaBrowser() {
+      if (!navigator.geolocation) return Promise.reject('Geolocation not supported');
+      return new Promise((resolve, reject) => {
+        const opts = { enableHighAccuracy: true, timeout: 8000 };
+        navigator.geolocation.getCurrentPosition(
+          pos => resolve({
+            lat: pos.coords.latitude,
+            lon: pos.coords.longitude,
+            method: 'browser'
+          }),
+          err => reject(err),
+          opts
+        );
+      });
+    }
+
+    // Fallback: use IP-based lookup (ip-api)
+    async function getLocationViaIP() {
+      // ip-api is a simple free JSON endpoint
+      const res = await fetch('https://ip-api.com/json/?fields=status,message,country,regionName,city,lat,lon,query');
+      const j = await res.json();
+      if (j.status !== 'success') throw new Error(j.message || 'IP location failed');
+      return { lat: j.lat, lon: j.lon, city: j.city, region: j.regionName, country: j.country, method: 'ip' };
+    }
+
+    // Fetch weather from Open-Meteo (no key)
+    async function fetchWeather(lat, lon) {
+      // open-meteo current_weather gives temp, windspeed, weathercode
+      const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true&timezone=auto`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('Weather fetch failed');
+      return res.json();
+    }
+
+    async function showWeather() {
+      errorBox.style.display = 'none';
+      try {
+        statusEl.textContent = 'Detecting location…';
+        let loc;
+        try {
+          loc = await getLocationViaBrowser();
+          methodEl.textContent = 'Browser geolocation';
+        } catch (e) {
+          // browser denied or failed -> fallback
+          statusEl.textContent = 'Browser location failed — falling back to IP lookup…';
+          loc = await getLocationViaIP();
+          methodEl.textContent = 'IP lookup';
+        }
+
+        statusEl.textContent = 'Fetching weather…';
+        const w = await fetchWeather(loc.lat, loc.lon);
+
+        const cw = w.current_weather;
+        if (!cw) throw new Error('No current weather returned');
+
+        // Some Open-Meteo responses include timezone & resolved place info
+        const placeName = (loc.city && loc.country) ? `${loc.city}, ${loc.country}` : (w.timezone || 'Unknown location');
+
+        placeEl.textContent = placeName;
+        const code = cw.weathercode;
+        const icon = iconMap[code] || '🌤️';
+        iconEl.textContent = icon;
+        descEl.textContent = weatherText(code);
+        tempEl.textContent = `${Math.round(cw.temperature)}°C`;
+        moreEl.textContent = `Wind ${Math.round(cw.windspeed)} km/h · Direction ${Math.round(cw.winddirection)}°`;
+        updatedEl.textContent = fmtDate(new Date());
+        statusEl.textContent = 'Done';
+      } catch (err) {
+        console.error(err);
+        statusEl.textContent = 'Error';
+        errorBox.style.display = 'block';
+        errorBox.className = 'error';
+        errorBox.textContent = 'Could not load weather: ' + (err.message || err);
+      }
+    }
+
+    // start
+    showWeather();
+
+    // refresh
+    refreshBtn.addEventListener('click', () => {
+      statusEl.textContent = 'Refreshing…';
+      showWeather();
+    });
+  </script>
+</body>
+</html>
