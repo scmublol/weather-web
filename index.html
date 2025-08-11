@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Weather in Your Terminal — Web</title>
   <style>
+    /* (Your CSS here, same as before) */
     :root{
       --bg:#0f1724; --card:#0b1220; --accent:#4fd1c5; --muted:#94a3b8;
       --glass: rgba(255,255,255,0.04);
@@ -80,25 +81,20 @@
       <div id="errorBox" style="margin-top:14px;display:none"></div>
 
       <footer style="margin-top:16px;color:var(--muted);font-size:.88rem">
-        Tip: Allow location access for the most accurate results. This site uses <strong>Open-Meteo</strong> for weather (no API key needed).This is open sourced No ips will be </strong>SAVED</strong>
+        This site uses <strong>Open-Meteo</strong> for weather and free IP location services. No IPs are stored.
       </footer>
     </div>
   </div>
 
   <script>
-    // Icons by weather code (basic mapping)
     const iconMap = {
-      0: '☀️', // Clear sky
-      1: '🌤️', // Mainly clear
-      2: '⛅', // Partly cloudy
-      3: '☁️', // Overcast
-      45: '🌫️',46:'🌫️', // Fog
-      48: '🌫️',
-      51: '🌦️',52:'🌧️',53:'🌧️', // Drizzle / Rain
-      61: '🌧️',63:'🌧️',65:'⛈️',
-      71: '🌨️',73:'🌨️',75:'🌨️',
-      80: '🌦️',81:'🌧️',82:'⛈️',
-      95: '⛈️',96:'⛈️',99:'⛈️'
+      0: '☀️', 1: '🌤️', 2: '⛅', 3: '☁️',
+      45: '🌫️', 48: '🌫️',
+      51: '🌦️', 53: '🌧️', 55: '🌧️',
+      61: '🌧️', 63: '🌧️', 65: '⛈️',
+      71: '🌨️', 73: '🌨️', 75: '🌨️',
+      80: '🌦️', 81: '🌧️', 82: '⛈️',
+      95: '⛈️', 96: '⛈️', 99: '⛈️'
     };
 
     const statusEl = document.getElementById('status');
@@ -112,55 +108,50 @@
     const errorBox = document.getElementById('errorBox');
     const refreshBtn = document.getElementById('refreshBtn');
 
-    // Helper: format date/time
     function fmtDate(ts) {
-      const d = new Date(ts);
-      return d.toLocaleString();
+      return new Date(ts).toLocaleString();
     }
 
-    // Convert Open-Meteo weather code to text (small mapping)
     function weatherText(code) {
-      // Simplified mapping
-      if (code === 0) return 'Clear sky';
-      if (code === 1) return 'Mainly clear';
-      if (code === 2) return 'Partly cloudy';
-      if (code === 3) return 'Overcast';
-      if ([45,48].includes(code)) return 'Fog';
-      if ([51,53,55,80,81].includes(code)) return 'Rain / Drizzle';
-      if ([61,63,65,95,96,99].includes(code)) return 'Thunderstorm / Heavy rain';
-      if ([71,73,75,77].includes(code)) return 'Snow';
-      return 'Unknown';
+      const map = {
+        0: 'Clear sky', 1: 'Mainly clear', 2: 'Partly cloudy', 3: 'Overcast',
+        45: 'Fog', 48: 'Fog',
+        51: 'Rain / Drizzle', 53: 'Rain / Drizzle', 55: 'Rain / Drizzle',
+        61: 'Thunderstorm / Heavy rain', 63: 'Thunderstorm / Heavy rain', 65: 'Thunderstorm / Heavy rain',
+        71: 'Snow', 73: 'Snow', 75: 'Snow',
+        80: 'Rain / Drizzle', 81: 'Rain / Drizzle', 82: 'Thunderstorm / Heavy rain',
+        95: 'Thunderstorm / Heavy rain', 96: 'Thunderstorm / Heavy rain', 99: 'Thunderstorm / Heavy rain'
+      };
+      return map[code] || 'Unknown';
     }
 
-    // Primary: browser geolocation
-    async function getLocationViaBrowser() {
-      if (!navigator.geolocation) return Promise.reject('Geolocation not supported');
-      return new Promise((resolve, reject) => {
-        const opts = { enableHighAccuracy: true, timeout: 8000 };
-        navigator.geolocation.getCurrentPosition(
-          pos => resolve({
-            lat: pos.coords.latitude,
-            lon: pos.coords.longitude,
-            method: 'browser'
-          }),
-          err => reject(err),
-          opts
-        );
-      });
-    }
-
-    // Fallback: use IP-based lookup (ip-api)
-    async function getLocationViaIP() {
-      // ip-api is a simple free JSON endpoint
-      const res = await fetch('https://ip-api.com/json/?fields=status,message,country,regionName,city,lat,lon,query');
+    async function getLocationViaOpenMeteoIP() {
+      statusEl.textContent = 'Detecting location via Open-Meteo IP…';
+      const res = await fetch('https://api.open-meteo.com/v1/ip');
       const j = await res.json();
-      if (j.status !== 'success') throw new Error(j.message || 'IP location failed');
-      return { lat: j.lat, lon: j.lon, city: j.city, region: j.regionName, country: j.country, method: 'ip' };
+      if (!j.latitude || !j.longitude) throw new Error('Open-Meteo IP location failed');
+      return {
+        lat: j.latitude,
+        lon: j.longitude,
+        city: j.city || '',
+        country: j.country || ''
+      };
     }
 
-    // Fetch weather from Open-Meteo (no key)
+    async function getLocationViaIpapi() {
+      statusEl.textContent = 'Detecting location via ipapi.co fallback…';
+      const res = await fetch('https://ipapi.co/json/');
+      const j = await res.json();
+      if (!j.latitude || !j.longitude) throw new Error('ipapi.co location failed');
+      return {
+        lat: j.latitude,
+        lon: j.longitude,
+        city: j.city || '',
+        country: j.country_name || ''
+      };
+    }
+
     async function fetchWeather(lat, lon) {
-      // open-meteo current_weather gives temp, windspeed, weathercode
       const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true&timezone=auto`;
       const res = await fetch(url);
       if (!res.ok) throw new Error('Weather fetch failed');
@@ -170,35 +161,29 @@
     async function showWeather() {
       errorBox.style.display = 'none';
       try {
-        statusEl.textContent = 'Detecting location…';
+        // Try Open-Meteo IP lookup first
         let loc;
         try {
-          loc = await getLocationViaBrowser();
-          methodEl.textContent = 'Browser geolocation';
-        } catch (e) {
-          // browser denied or failed -> fallback
-          statusEl.textContent = 'Browser location failed — falling back to IP lookup…';
-          loc = await getLocationViaIP();
-          methodEl.textContent = 'IP lookup';
+          loc = await getLocationViaOpenMeteoIP();
+          methodEl.textContent = 'Open-Meteo IP lookup';
+        } catch {
+          // fallback to ipapi.co
+          loc = await getLocationViaIpapi();
+          methodEl.textContent = 'ipapi.co fallback lookup';
         }
 
         statusEl.textContent = 'Fetching weather…';
         const w = await fetchWeather(loc.lat, loc.lon);
-
         const cw = w.current_weather;
         if (!cw) throw new Error('No current weather returned');
 
-        // Some Open-Meteo responses include timezone & resolved place info
-        const placeName = (loc.city && loc.country) ? `${loc.city}, ${loc.country}` : (w.timezone || 'Unknown location');
-
-        placeEl.textContent = placeName;
-        const code = cw.weathercode;
-        const icon = iconMap[code] || '🌤️';
-        iconEl.textContent = icon;
-        descEl.textContent = weatherText(code);
+        placeEl.textContent = loc.city && loc.country ? `${loc.city}, ${loc.country}` : 'Unknown location';
+        iconEl.textContent = iconMap[cw.weathercode] || '🌤️';
+        descEl.textContent = weatherText(cw.weathercode);
         tempEl.textContent = `${Math.round(cw.temperature)}°C`;
         moreEl.textContent = `Wind ${Math.round(cw.windspeed)} km/h · Direction ${Math.round(cw.winddirection)}°`;
-        updatedEl.textContent = fmtDate(new Date());
+        updatedEl.textContent = fmtDate(Date.now());
+
         statusEl.textContent = 'Done';
       } catch (err) {
         console.error(err);
@@ -209,15 +194,12 @@
       }
     }
 
-    // start
-    showWeather();
-
-    // refresh
     refreshBtn.addEventListener('click', () => {
       statusEl.textContent = 'Refreshing…';
       showWeather();
     });
+
+    showWeather();
   </script>
 </body>
 </html>
-
